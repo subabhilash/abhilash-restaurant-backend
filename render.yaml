@@ -22,6 +22,9 @@ services:
     healthCheckPath: /health
 
     envVars:
+      # Pin Python — Render defaults to 3.14 which lacks pydantic-core wheels
+      - key: PYTHON_VERSION
+        value: "3.11.10"
       - key: APP_ENV
         value: production
       - key: DEBUG
