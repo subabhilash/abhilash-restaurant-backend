@@ -13,8 +13,10 @@ services:
     branch: main
     rootDir: .
 
-    buildCommand: pip install -r requirements.txt
-    preDeployCommand: alembic upgrade head
+    # Free tier doesn't support preDeployCommand — run migrations in buildCommand.
+    # Migrations are idempotent, so re-running on every build is safe.
+    # All env vars (including secrets) are available during Render builds.
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
     startCommand: gunicorn run:sio_app -c gunicorn.conf.py
 
     healthCheckPath: /health
