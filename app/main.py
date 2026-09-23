@@ -15,7 +15,7 @@ from slowapi.util import get_remote_address
 import os
 
 from app.config import get_settings
-from app.routes import auth, users, restaurants, menu, orders, kitchen, analytics
+from app.routes import auth, users, restaurants, menu, orders, kitchen, analytics, waiter, billing
 from app.sockets.manager import sio
 
 settings = get_settings()
@@ -141,6 +141,8 @@ app.include_router(menu.router,        prefix=f"{PREFIX}/menu",        tags=["me
 app.include_router(orders.router,      prefix=f"{PREFIX}/orders",      tags=["orders"])
 app.include_router(kitchen.router,     prefix=f"{PREFIX}/kitchen",     tags=["kitchen"])
 app.include_router(analytics.router,   prefix=f"{PREFIX}/analytics",   tags=["analytics"])
+app.include_router(waiter.router,      prefix=f"{PREFIX}/waiter",      tags=["waiter"])
+app.include_router(billing.router,     prefix=f"{PREFIX}/billing",     tags=["billing"])
 
 # ── Static media ──────────────────────────────────────────────────────────────
 os.makedirs("media", exist_ok=True)

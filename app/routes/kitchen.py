@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.auth.dependencies import get_current_user, require_admin, require_kitchen_or_admin
 from app.database import get_db
-from app.models.kitchen import KitchenStation, KitchenTicket
+from app.models.kitchen import KitchenStation, KitchenTicket, KitchenTicketStatusHistory
 from app.models.order import Order
 from app.models.user import User
 from app.schemas.common import MessageResponse, PaginatedResponse
@@ -191,11 +191,19 @@ def update_kitchen_order_status(
     if order.kitchen_ticket:
         kt_map = {"preparing": "in_progress", "ready": "ready", "completed": "delivered", "cancelled": "cancelled"}
         if new_kt := kt_map.get(body.status):
+            previous_kt_status = order.kitchen_ticket.status
             order.kitchen_ticket.status = new_kt
             if new_kt == "in_progress" and not order.kitchen_ticket.started_at:
                 order.kitchen_ticket.started_at = now
             elif new_kt in ("delivered", "cancelled"):
                 order.kitchen_ticket.completed_at = now
+            db.add(KitchenTicketStatusHistory(
+                restaurant_id=order.restaurant_id,
+                ticket_id=order.kitchen_ticket.id,
+                from_status=previous_kt_status,
+                to_status=new_kt,
+                changed_by=current_user.id,
+            ))
 
     # Free table on terminal status
     if body.status in ("completed", "cancelled", "served") and order.table_id:
@@ -269,11 +277,19 @@ def update_ticket(
 
     now = datetime.now(timezone.utc)
     if body.status and body.status != ticket.status:
+        previous_status = ticket.status
         ticket.status = body.status
         if body.status == "in_progress" and not ticket.started_at:
             ticket.started_at = now
         elif body.status in ("delivered", "cancelled"):
             ticket.completed_at = now
+        db.add(KitchenTicketStatusHistory(
+            restaurant_id=ticket.restaurant_id,
+            ticket_id=ticket.id,
+            from_status=previous_status,
+            to_status=body.status,
+            changed_by=current_user.id,
+        ))
     if body.priority is not None:
         ticket.priority = body.priority
     if body.notes is not None:

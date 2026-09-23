@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.menu import MenuItem
-from app.models.order import Order, OrderItem, RestaurantTable
+from app.models.order import Order, OrderItem, OrderStatusHistory, RestaurantTable
 from app.models.kitchen import KitchenTicket
 from app.models.restaurant import Restaurant
 from app.schemas.order import OrderCreate, OrderItemResponse, OrderListItem, OrderResponse
@@ -55,6 +55,11 @@ def create_order(
 
     if not data.items:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Order must have at least one item")
+
+    if data.table_id:
+        table = db.get(RestaurantTable, data.table_id)
+        if not table or table.restaurant_id != restaurant_id or not table.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid table")
 
     subtotal = Decimal("0")
     order_items_data = []
@@ -106,6 +111,14 @@ def create_order(
 
     db.add(order)
     db.flush()
+    db.add(OrderStatusHistory(
+        restaurant_id=restaurant_id,
+        order_id=order.id,
+        from_status=None,
+        to_status=order.status,
+        changed_by=created_by,
+        source="public" if created_by is None else "staff",
+    ))
 
     for item_data in order_items_data:
         db.add(OrderItem(order_id=order.id, **item_data))
@@ -117,7 +130,7 @@ def create_order(
         table = db.get(RestaurantTable, data.table_id)
         if table:
             table.occupied_since = datetime.now(timezone.utc)
-            table.status = "occupied"  # ← was missing, table stayed "available"
+            table.status = "occupied"
 
     db.commit()
     db.refresh(order)

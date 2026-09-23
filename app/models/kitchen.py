@@ -84,6 +84,9 @@ class KitchenTicket(Base):
         "KitchenStation", back_populates="tickets", foreign_keys=[station_id]
     )
     assignee: Mapped[Optional[User]] = relationship("User", foreign_keys=[assigned_to])  # noqa: F821
+    status_history: Mapped[List[KitchenTicketStatusHistory]] = relationship(  # noqa: F821
+        "KitchenTicketStatusHistory", back_populates="ticket", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index("ix_kitchen_tickets_restaurant_status", "restaurant_id", "status"),
@@ -94,3 +97,27 @@ class KitchenTicket(Base):
         if self.started_at and self.completed_at:
             return int((self.completed_at - self.started_at).total_seconds())
         return None
+
+
+class KitchenTicketStatusHistory(Base):
+    __tablename__ = "kitchen_ticket_status_history"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    restaurant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("restaurants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ticket_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("kitchen_tickets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    from_status: Mapped[Optional[str]] = mapped_column(String(20))
+    to_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    changed_by: Mapped[Optional[int]] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    ticket: Mapped[KitchenTicket] = relationship("KitchenTicket", back_populates="status_history")
+
+    __table_args__ = (
+        Index("ix_kitchen_ticket_status_history_restaurant_created", "restaurant_id", "created_at"),
+    )

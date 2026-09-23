@@ -1,24 +1,22 @@
 from __future__ import annotations
 
-import io
 import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth.dependencies import get_current_user, require_admin, require_roles
 from app.database import get_db
-from app.models.order import Order, OrderItem, RestaurantTable
+from app.models.order import Order, OrderItem, OrderStatusHistory, RestaurantTable, TableQRCode
 from app.models.restaurant import Restaurant
 from app.models.user import User
 from app.schemas.common import MessageResponse, PaginatedResponse
 from app.schemas.order import (
     OrderCreate, OrderListItem, OrderPaymentUpdate, OrderResponse,
     OrderStatusUpdate, PublicOrderCreate, PublicOrderTrackResponse,
-    TableCreate, TableResponse, TableUpdate,
+    TableCreate, TableQRCodeResponse, TableResponse, TableUpdate,
 )
 from app.services.order_service import build_order_list_item, build_order_response, create_order
 from app.utils.helpers import paginate
@@ -29,10 +27,38 @@ router = APIRouter()
 def _table_response(t: RestaurantTable) -> TableResponse:
     data = TableResponse.model_validate(t)
     try:
-        data.qr_url = t.qr_url
+        active_qr = t.active_qr
+        data.qr_token = active_qr.qr_token if active_qr else t.qr_token
+        data.qr_url = active_qr.qr_url if active_qr and active_qr.qr_url else t.qr_url
     except Exception:
         pass
     return data
+
+
+def _build_qr_url(table: RestaurantTable, qr_token: str) -> str:
+    from app.config import get_settings
+    return f"{get_settings().frontend_url}/order/{table.restaurant.slug}/{qr_token}"
+
+
+def _create_table_qr(db: Session, table: RestaurantTable, user: User) -> TableQRCode:
+    db.query(TableQRCode).filter(
+        TableQRCode.table_id == table.id,
+        TableQRCode.status == "active",
+        TableQRCode.deleted_at.is_(None),
+    ).update({"status": "rotated", "rotated_at": datetime.now(timezone.utc)}, synchronize_session=False)
+    qr_token = secrets.token_urlsafe(32)
+    qr = TableQRCode(
+        restaurant_id=table.restaurant_id,
+        table_id=table.id,
+        qr_id=f"qr_{secrets.token_urlsafe(16)}",
+        qr_token=qr_token,
+        qr_url=_build_qr_url(table, qr_token),
+        created_by=user.id,
+        created_by_role=user.role,
+    )
+    table.qr_token = qr_token
+    db.add(qr)
+    return qr
 
 
 @router.get("/tables", response_model=PaginatedResponse[TableResponse])
@@ -64,6 +90,8 @@ def create_table(
         **body.model_dump(),
     )
     db.add(table)
+    db.flush()
+    _create_table_qr(db, table, current_user)
     db.commit()
     db.refresh(table)
     return _table_response(table)
@@ -100,41 +128,6 @@ def deactivate_table(
     return MessageResponse(message="Table deactivated")
 
 
-@router.get("/tables/{table_id}/qr-image")
-def get_qr_image(
-    table_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Return the QR code as a PNG image stream."""
-    import qrcode
-    from qrcode.image.pure import PyPNGImage
-
-    table = db.get(RestaurantTable, table_id)
-    if not table or table.restaurant_id != current_user.restaurant_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
-
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=8,
-        border=4,
-    )
-    qr.add_data(table.qr_url)
-    qr.make(fit=True)
-
-    img = qr.make_image(image_factory=PyPNGImage)
-    buf = io.BytesIO()
-    img.save(buf)
-    buf.seek(0)
-
-    return StreamingResponse(
-        buf,
-        media_type="image/png",
-        headers={"Content-Disposition": f'inline; filename="table-{table.table_number}-qr.png"'},
-    )
-
-
 @router.post("/tables/{table_id}/rotate-qr", response_model=TableResponse)
 def rotate_qr(
     table_id: int,
@@ -144,10 +137,81 @@ def rotate_qr(
     table = db.get(RestaurantTable, table_id)
     if not table or table.restaurant_id != current_user.restaurant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
-    table.qr_token = secrets.token_urlsafe(32)
+    _create_table_qr(db, table, current_user)
     db.commit()
     db.refresh(table)
     return _table_response(table)
+
+
+@router.get("/tables/{table_id}/qr-codes", response_model=list[TableQRCodeResponse])
+def list_table_qr_codes(
+    table_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(RestaurantTable, table_id)
+    if not table:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
+    if current_user.role != "super_admin" and table.restaurant_id != current_user.restaurant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return db.query(TableQRCode).filter(
+        TableQRCode.table_id == table_id,
+        TableQRCode.deleted_at.is_(None),
+    ).order_by(TableQRCode.created_at.desc()).all()
+
+
+@router.post("/tables/{table_id}/qr-codes", response_model=TableQRCodeResponse, status_code=status.HTTP_201_CREATED)
+def create_table_qr_code(
+    table_id: int,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    table = db.get(RestaurantTable, table_id)
+    if not table:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
+    if current_user.role != "super_admin" and table.restaurant_id != current_user.restaurant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    qr = _create_table_qr(db, table, current_user)
+    db.commit()
+    db.refresh(qr)
+    return qr
+
+
+@router.patch("/qr-codes/{qr_id}/rotate", response_model=TableQRCodeResponse)
+def rotate_qr_code(
+    qr_id: str,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    qr = db.query(TableQRCode).filter_by(qr_id=qr_id, deleted_at=None).first()
+    if not qr:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR code not found")
+    if current_user.role != "super_admin" and qr.restaurant_id != current_user.restaurant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    table = db.get(RestaurantTable, qr.table_id)
+    if not table:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
+    new_qr = _create_table_qr(db, table, current_user)
+    db.commit()
+    db.refresh(new_qr)
+    return new_qr
+
+
+@router.patch("/qr-codes/{qr_id}/disable", response_model=TableQRCodeResponse)
+def disable_qr_code(
+    qr_id: str,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    qr = db.query(TableQRCode).filter_by(qr_id=qr_id, deleted_at=None).first()
+    if not qr:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR code not found")
+    if current_user.role != "super_admin" and qr.restaurant_id != current_user.restaurant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    qr.status = "disabled"
+    db.commit()
+    db.refresh(qr)
+    return qr
 
 
 @router.get("", response_model=PaginatedResponse[OrderListItem])
@@ -236,6 +300,7 @@ def update_order_status(
         )
 
     now = datetime.now(timezone.utc)
+    previous_status = order.status
     order.status = body.status
     timestamp_map = {
         "confirmed": "confirmed_at", "preparing": "preparing_at",
@@ -249,11 +314,20 @@ def update_order_status(
         kt_map = {"preparing": "in_progress", "ready": "ready",
                   "completed": "delivered", "cancelled": "cancelled"}
         if new_kt := kt_map.get(body.status):
+            previous_kt_status = order.kitchen_ticket.status
             order.kitchen_ticket.status = new_kt
             if new_kt == "in_progress" and not order.kitchen_ticket.started_at:
                 order.kitchen_ticket.started_at = now
             elif new_kt in ("delivered", "cancelled"):
                 order.kitchen_ticket.completed_at = now
+            from app.models.kitchen import KitchenTicketStatusHistory
+            db.add(KitchenTicketStatusHistory(
+                restaurant_id=order.restaurant_id,
+                ticket_id=order.kitchen_ticket.id,
+                from_status=previous_kt_status,
+                to_status=new_kt,
+                changed_by=current_user.id,
+            ))
 
     # Free the table when the order reaches a terminal status
     if body.status in ("completed", "cancelled", "served") and order.table_id:
@@ -262,6 +336,14 @@ def update_order_status(
             table.status = "available"
             table.last_freed_at = now
 
+    db.add(OrderStatusHistory(
+        restaurant_id=order.restaurant_id,
+        order_id=order.id,
+        from_status=previous_status,
+        to_status=body.status,
+        changed_by=current_user.id,
+        source="staff",
+    ))
     db.commit()
     db.refresh(order)
 
@@ -327,10 +409,18 @@ def public_create_order(
     if not restaurant or not restaurant.allow_online_ordering:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found or ordering disabled")
 
-    table = db.query(RestaurantTable).filter_by(
-        restaurant_id=restaurant.id, qr_token=qr_token, is_active=True
+    qr = db.query(TableQRCode).filter_by(
+        restaurant_id=restaurant.id,
+        qr_token=qr_token,
+        status="active",
+        deleted_at=None,
     ).first()
-    if not table:
+    if not qr:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid QR code")
+    qr.scan_count += 1
+    qr.last_scanned_at = datetime.now(timezone.utc)
+    table = db.get(RestaurantTable, qr.table_id)
+    if not table or not table.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid QR code")
 
     order_data = OrderCreate(

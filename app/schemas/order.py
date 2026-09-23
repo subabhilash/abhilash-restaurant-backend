@@ -38,6 +38,29 @@ class TableResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TableQRCodeCreate(BaseModel):
+    table_id: int = Field(gt=0)
+
+
+class TableQRCodeResponse(BaseModel):
+    id: int
+    restaurant_id: int
+    table_id: int
+    qr_id: str
+    qr_token: str
+    qr_url: str
+    status: str
+    created_by: Optional[int]
+    created_by_role: str
+    rotated_at: Optional[datetime]
+    last_scanned_at: Optional[datetime]
+    scan_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class OrderItemCreate(BaseModel):
     menu_item_id: int = Field(gt=0)
     quantity: int = Field(default=1, ge=1, le=100)

@@ -24,6 +24,7 @@ class Category(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     display_order: Mapped[int] = mapped_column(SmallInteger, default=0, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -60,6 +61,7 @@ class MenuItem(Base):
     calories: Mapped[Optional[int]] = mapped_column(Integer)
     allergens: Mapped[list] = mapped_column(JSON, default=list)
     dietary_tags: Mapped[list] = mapped_column(JSON, default=list)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

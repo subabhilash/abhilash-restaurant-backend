@@ -13,6 +13,7 @@ class UserCreate(BaseModel):
     phone: Optional[str] = Field(default=None, max_length=20)
     password: str = Field(min_length=8, max_length=128)
     role: str = Field(default="waiter")
+    restaurant_id: Optional[int] = None
 
     @field_validator("role")
     @classmethod

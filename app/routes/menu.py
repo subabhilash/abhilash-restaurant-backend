@@ -44,7 +44,10 @@ def list_categories(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Category).filter(Category.restaurant_id == current_user.restaurant_id).order_by(
+    q = db.query(Category).filter(
+        Category.restaurant_id == current_user.restaurant_id,
+        Category.deleted_at.is_(None),
+    ).order_by(
         Category.display_order, Category.name
     )
     return paginate(q, page, page_size, lambda c: _serialize_category(c, db))
@@ -106,7 +109,10 @@ def list_items(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = db.query(MenuItem).filter(MenuItem.restaurant_id == current_user.restaurant_id)
+    q = db.query(MenuItem).filter(
+        MenuItem.restaurant_id == current_user.restaurant_id,
+        MenuItem.deleted_at.is_(None),
+    )
     if category_id:
         q = q.filter(MenuItem.category_id == category_id)
     if is_available is not None:
@@ -173,14 +179,14 @@ def public_menu(slug: str, db: Session = Depends(get_db)):
 
     categories = (
         db.query(Category)
-        .filter(Category.restaurant_id == restaurant.id, Category.is_active == True)
+        .filter(Category.restaurant_id == restaurant.id, Category.is_active == True, Category.deleted_at.is_(None))
         .order_by(Category.display_order, Category.name)
         .all()
     )
 
     menu = []
     for cat in categories:
-        items = [PublicMenuItemResponse.model_validate(i) for i in cat.items if i.is_available]
+        items = [PublicMenuItemResponse.model_validate(i) for i in cat.items if i.is_available and i.deleted_at is None]
         menu.append(PublicCategoryResponse(
             id=cat.id, name=cat.name, description=cat.description,
             display_order=cat.display_order, items=items,

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user, require_admin, require_restaurant_admin, require_super_admin
 from app.database import get_db
+from app.models.restaurant import Restaurant
 from app.models.user import User
 from app.schemas.common import MessageResponse, PaginatedResponse
 from app.schemas.user import (
@@ -67,7 +68,7 @@ def list_users(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = db.query(User)
+    q = db.query(User).filter(User.deleted_at.is_(None))
     if current_user.role == "super_admin":
         # Super admin can filter by restaurant or see all
         if restaurant_id is not None:
@@ -91,9 +92,11 @@ def create_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
     # Determine which restaurant to assign to
-    target_restaurant_id = current_user.restaurant_id
+    target_restaurant_id = body.restaurant_id if current_user.role == "super_admin" else current_user.restaurant_id
     if not target_restaurant_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No restaurant context")
+    if not db.get(Restaurant, target_restaurant_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Restaurant not found")
 
     user = User(
         email=body.email,
