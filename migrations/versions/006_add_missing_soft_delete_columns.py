@@ -34,4 +34,3 @@ def upgrade() -> None:
 def downgrade() -> None:
     for table_name in ("menu_items", "categories", "users"):
         op.execute(sa.text(f"DROP INDEX IF EXISTS ix_{table_name}_deleted_at"))
-        op.execute(sa.text(f"ALTER TABLE {table_name} DROP COLUMN IF EXISTS deleted_at"))

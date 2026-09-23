@@ -32,6 +32,27 @@ cd backend
 python3 sync_db.py
 ```
 
+Production DB migration:
+
+```bash
+cd backend
+DATABASE_URL="postgresql://user:password@host/db?sslmode=require" python3 sync_db.py
+```
+
+Or use a production env file:
+
+```bash
+cd backend
+python3 sync_db.py --env-file .env.production
+```
+
+Verify production DB schema without changing it:
+
+```bash
+cd backend
+python3 sync_db.py --env-file .env.production --check-only
+```
+
 Direct Alembic command:
 
 ```bash
@@ -70,5 +91,6 @@ python3 start_backend.py --install
 ```bash
 python3 start_backend.py       # sync DB and run API
 python3 sync_db.py             # migrate DB only
+python3 sync_db.py --check-only # verify DB schema only
 venv/bin/python run.py         # run API without DB sync helper
 ```

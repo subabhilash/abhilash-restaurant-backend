@@ -69,9 +69,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("categories", "deleted_at")
-    op.drop_column("menu_items", "deleted_at")
-    op.drop_column("users", "deleted_at")
+    op.execute(sa.text("ALTER TABLE categories DROP COLUMN IF EXISTS deleted_at"))
+    op.execute(sa.text("ALTER TABLE menu_items DROP COLUMN IF EXISTS deleted_at"))
+    op.execute(sa.text("ALTER TABLE users DROP COLUMN IF EXISTS deleted_at"))
     op.drop_table("password_reset_tokens")
     op.drop_index("ix_refresh_tokens_expires_revoked", table_name="refresh_tokens")
     op.create_index("ix_restaurant_tables_qr_token", "restaurant_tables", ["qr_token"])
